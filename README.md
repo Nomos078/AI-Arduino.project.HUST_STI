@@ -19,7 +19,7 @@ HUST-STI2025级寒假AI+Arduino项目_GroupD_Class3
 1. Hardware：存放Altium Designer的完整硬件工程、原理图及BOM清单。
 2. Software：存放Keil MDK工程文件、C语言源码及底层驱动库。
 3. Algorithm：存放模型部署相关的转换脚本及原始的tflite文件。
-4. Media：存放项目开发过程的摄影记录、实物细节图以及演示视频资料。
+4. Images：存放项目开发过程的摄影记录、实物细节图以及演示视频资料。
 
 ## 5. 快速复现指南
 1. 使用Git将本仓库完整克隆至本地。
