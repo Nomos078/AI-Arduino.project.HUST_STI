@@ -1,0 +1,430 @@
+/*
+接线说明：	一共8个引脚，需要接6个。
+			三根电源线正极接3.3V
+			其余三根线按照如下顺序接
+			SDA:PB7
+			SCL:PB6
+			INT:PB4
+			
+调用方式：
+
+#include "sys.h"
+#include "delay.h"
+#include "led.h"
+#include "max30102.h"
+#include "oled.h"
+
+int main(void)
+{
+	delay_init();										// 延时函数初始化	  
+	LED_Init();											// 初始化与LED连接的硬件接口
+	
+	max30102_init();									// max30102初始化
+	
+	OLED_Init();      									// OLED初始化
+	OLED_Clear();     									// OLED清屏
+	OLED_ShowString(0,0,(uint8_t*)"hrAvg:",16);			// 显示字符串
+	OLED_ShowString(0,2,(uint8_t*)"o2Avg:",16);			// 显示字符串
+	while(1)
+	{
+	
+		max30102_loop();								// 获取心率数据
+ 
+		if(hrAvg > 100 || spo2Avg < 95)					// 判断是否异常
+		{
+			PCout(13) = 0;								// 亮灯
+		}
+		else
+		{
+			PCout(13) = 1;								// 灭灯
+		}
+	}
+}
+
+*/
+
+#include "max30102.h"
+#include "myiic.h"
+#include "delay.h"
+#include "algorithm.h"
+
+u8 max30102_Bus_Write(u8 Register_Address, u8 Word_Data)
+{
+
+	/* 采用串行EEPROM随即读取指令序列，连续读取若干字节 */
+
+	/* 第1步：发起I2C总线启动信号 */
+	IIC_Start();
+
+	/* 第2步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_WR);	/* 此处是写指令 */
+
+	/* 第3步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第4步：发送字节地址 */
+	IIC_Send_Byte(Register_Address);
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+	
+	/* 第5步：开始写入数据 */
+	IIC_Send_Byte(Word_Data);
+
+	/* 第6步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+	return 1;	/* 执行成功 */
+
+cmd_fail: /* 命令执行失败后，切记发送停止信号，避免影响I2C总线上其他设备 */
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+	return 0;
+}
+
+u8 max30102_Bus_Read(u8 Register_Address)
+{
+	u8  data;
+
+
+	/* 第1步：发起I2C总线启动信号 */
+	IIC_Start();
+
+	/* 第2步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_WR);	/* 此处是写指令 */
+
+	/* 第3步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第4步：发送字节地址， */
+	IIC_Send_Byte((uint8_t)Register_Address);
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+	
+
+	/* 第6步：重新启动I2C总线。下面开始读取数据 */
+	IIC_Start();
+
+	/* 第7步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_RD);	/* 此处是读指令 */
+
+	/* 第8步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第9步：读取数据 */
+	{
+		data = IIC_Read_Byte(0);	/* 读1个字节 */
+
+		IIC_NAck();	/* 最后1个字节读完后，CPU产生NACK信号(驱动SDA = 1) */
+	}
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+	return data;	/* 执行成功 返回data值 */
+
+cmd_fail: /* 命令执行失败后，切记发送停止信号，避免影响I2C总线上其他设备 */
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+	return 0;
+}
+
+void max30102_FIFO_ReadWords(u8 Register_Address,u16 Word_Data[][2],u8 count)
+{
+	u8 i=0;
+	u8 no = count;
+	u8 data1, data2;
+	/* 第1步：发起I2C总线启动信号 */
+	IIC_Start();
+
+	/* 第2步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_WR);	/* 此处是写指令 */
+
+	/* 第3步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第4步：发送字节地址， */
+	IIC_Send_Byte((uint8_t)Register_Address);
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+	
+
+	/* 第6步：重新启动I2C总线。下面开始读取数据 */
+	IIC_Start();
+
+	/* 第7步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_RD);	/* 此处是读指令 */
+
+	/* 第8步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第9步：读取数据 */
+	while (no)
+	{
+		data1 = IIC_Read_Byte(0);	
+		IIC_Ack();
+		data2 = IIC_Read_Byte(0);
+		IIC_Ack();
+		Word_Data[i][0] = (((u16)data1 << 8) | data2);  //
+
+		
+		data1 = IIC_Read_Byte(0);	
+		IIC_Ack();
+		data2 = IIC_Read_Byte(0);
+		if(1==no)
+			IIC_NAck();	/* 最后1个字节读完后，CPU产生NACK信号(驱动SDA = 1) */
+		else
+			IIC_Ack();
+		Word_Data[i][1] = (((u16)data1 << 8) | data2); 
+
+		no--;	
+		i++;
+	}
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+
+cmd_fail: /* 命令执行失败后，切记发送停止信号，避免影响I2C总线上其他设备 */
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+}
+
+void max30102_FIFO_ReadBytes(u8 Register_Address,u8* Data)
+{	
+	max30102_Bus_Read(REG_INTR_STATUS_1);
+	max30102_Bus_Read(REG_INTR_STATUS_2);
+	
+	/* 第1步：发起I2C总线启动信号 */
+	IIC_Start();
+
+	/* 第2步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_WR);	/* 此处是写指令 */
+
+	/* 第3步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第4步：发送字节地址， */
+	IIC_Send_Byte((uint8_t)Register_Address);
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+	
+
+	/* 第6步：重新启动I2C总线。下面开始读取数据 */
+	IIC_Start();
+
+	/* 第7步：发起控制字节，高7bit是地址，bit0是读写控制位，0表示写，1表示读 */
+	IIC_Send_Byte(max30102_WR_address | I2C_RD);	/* 此处是读指令 */
+
+	/* 第8步：发送ACK */
+	if (IIC_Wait_Ack() != 0)
+	{
+		goto cmd_fail;	/* EEPROM器件无应答 */
+	}
+
+	/* 第9步：读取数据 */
+	Data[0] = IIC_Read_Byte(1);	
+	Data[1] = IIC_Read_Byte(1);	
+	Data[2] = IIC_Read_Byte(1);	
+	Data[3] = IIC_Read_Byte(1);
+	Data[4] = IIC_Read_Byte(1);	
+	Data[5] = IIC_Read_Byte(0);
+	/* 最后1个字节读完后，CPU产生NACK信号(驱动SDA = 1) */
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+
+cmd_fail: /* 命令执行失败后，切记发送停止信号，避免影响I2C总线上其他设备 */
+	/* 发送I2C总线停止信号 */
+	IIC_Stop();
+}
+
+void EXTIx_Init(void)
+{
+	GPIO_InitTypeDef GPIO_InitStructure;
+	EXTI_InitTypeDef EXIT_InitStrue;
+	NVIC_InitTypeDef NVIC_InitStrue;
+	
+ 	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB,ENABLE);
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+
+	GPIO_InitStructure.GPIO_Pin  = GPIO_Pin_5;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
+	GPIO_Init(GPIOB, &GPIO_InitStructure);
+	
+	GPIO_EXTILineConfig(GPIO_PortSourceGPIOB, GPIO_PinSource5);
+
+	EXIT_InitStrue.EXTI_Line    = EXTI_Line5;
+	EXIT_InitStrue.EXTI_LineCmd = ENABLE;
+	EXIT_InitStrue.EXTI_Mode    = EXTI_Mode_Interrupt;
+	EXIT_InitStrue.EXTI_Trigger = EXTI_Trigger_Falling;
+	EXTI_Init(&EXIT_InitStrue);
+
+
+	NVIC_InitStrue.NVIC_IRQChannel=EXTI9_5_IRQn;
+	NVIC_InitStrue.NVIC_IRQChannelCmd=ENABLE;
+	NVIC_InitStrue.NVIC_IRQChannelPreemptionPriority=3;
+	NVIC_InitStrue.NVIC_IRQChannelSubPriority=3;
+	NVIC_Init(&NVIC_InitStrue);
+}
+
+int32_t n_ir_buffer_length=500;    //data length  
+uint32_t aun_ir_buffer_irq[100];
+uint32_t aun_red_buffer_irq[100];
+uint32_t aun_ir_buffer[500]; //IR LED sensor data   红外数据，用于计算血氧
+uint32_t aun_red_buffer[500];    //Red LED sensor data  红光数据，用于计算心率曲线以及计算心率
+
+uint8_t  aum_irq_num = 0;
+uint8_t  aum_irq_valid = 0;
+uint8_t temp[6];
+
+void EXTI9_5_IRQHandler(void)
+{
+	uint8_t i;
+
+	max30102_FIFO_ReadBytes(REG_FIFO_DATA,temp);//读取传感器数据，赋值到temp中
+
+	aun_red_buffer_irq[aum_irq_num] = (long)((long)((long)temp[0] & 0x03)<<16) | (long)temp[1]<<8 | (long)temp[2];	//将值合并得到实际数字，数组400-500为新读取数据
+	aun_ir_buffer_irq[aum_irq_num]  = (long)((long)((long)temp[3] & 0x03)<<16) | (long)temp[4]<<8 | (long)temp[5];	//将值合并得到实际数字，数组400-500为新读取数据
+
+	if(++aum_irq_num >= 100)
+	{
+		for(i = 0; i < 100; ++i)
+		{
+			aun_red_buffer[i + 400] = aun_red_buffer_irq[i];
+			aun_ir_buffer[i + 400]  = aun_ir_buffer_irq[i];
+		}
+		aum_irq_num   = 0;
+		aum_irq_valid = 1;
+	}
+
+	EXTI_ClearITPendingBit(EXTI_Line5); //清除中断标志位
+}
+
+char hrAvg_str[4]   = "";
+char spo2Avg_str[4] = "";
+
+int hrAvg	= 0;
+int spo2Avg	= 0;
+
+void max30102_loop(void)
+{
+	uint16_t i = 0;
+
+	int32_t n_sp02; //SPO2 value
+	int8_t ch_spo2_valid;   //indicator to show if the SP02 calculation is valid
+	int32_t n_heart_rate;   //heart rate value
+	int8_t  ch_hr_valid;    //indicator to show if the heart rate calculation is valid
+	
+	if(aum_irq_valid != 0)
+	{
+		aum_irq_valid = 0;
+		maxim_heart_rate_and_oxygen_saturation(				// 传入500个心率和血氧数据计算传感器检测结论，反馈心率和血氧测试结果
+			aun_ir_buffer,
+			n_ir_buffer_length,
+			aun_red_buffer,
+			&n_sp02,
+			&ch_spo2_valid,
+			&n_heart_rate,
+			&ch_hr_valid
+		);
+		
+		for(i = 0; i < 400; ++i)
+		{
+			aun_red_buffer[i] = aun_red_buffer[i + 100];	// 将100-500缓存数据移位到0-400
+			aun_ir_buffer[i]  = aun_ir_buffer[i + 100];		// 将100-500缓存数据移位到0-400
+			
+		}
+		
+		aum_irq_num = 0;
+		
+		if(ch_hr_valid != 0 && n_heart_rate > 30 && n_heart_rate < 180)
+		{
+			hrAvg = n_heart_rate;
+			hrAvg_str[0] = hrAvg / 100 % 10 + '0';
+			hrAvg_str[1] = hrAvg / 10 % 10 + '0';
+			hrAvg_str[2] = hrAvg / 1 % 10 + '0';
+			hrAvg_str[3] = '\0';
+		}
+		else
+		{
+			hrAvg_str[0] = 'n';
+			hrAvg_str[1] = 'o';
+			hrAvg_str[2] = 't';
+			hrAvg_str[3] = '\0';
+		}
+		
+		if(ch_spo2_valid != 0 && n_sp02 > 0 && n_sp02 <= 100)
+		{
+			spo2Avg = n_sp02;
+			spo2Avg_str[0] = spo2Avg / 100 % 10 + '0';
+			spo2Avg_str[1] = spo2Avg / 10 % 10 + '0';
+			spo2Avg_str[2] = spo2Avg / 1 % 10 + '0';
+			spo2Avg_str[3] = '\0';
+		
+		}
+		else
+		{
+			spo2Avg_str[0] = 'n';
+			spo2Avg_str[1] = 'o';
+			spo2Avg_str[2] = 't';
+			spo2Avg_str[3] = '\0';
+		}
+	}
+}
+
+void max30102_init(void)
+{
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);	 //设置NVIC中断分组2:2位抢占优先级，2位响应优先级 
+
+	IIC_Init();
+	
+	max30102_reset();
+
+	max30102_Bus_Write(REG_INTR_ENABLE_1,0xc0);	// INTR setting
+	max30102_Bus_Write(REG_INTR_ENABLE_2,0x00);
+	max30102_Bus_Write(REG_FIFO_WR_PTR,0x00);  	//FIFO_WR_PTR[4:0]
+	max30102_Bus_Write(REG_OVF_COUNTER,0x00);  	//OVF_COUNTER[4:0]
+	max30102_Bus_Write(REG_FIFO_RD_PTR,0x00);  	//FIFO_RD_PTR[4:0]
+	max30102_Bus_Write(REG_FIFO_CONFIG,0x0f);  	//sample avg = 1, fifo rollover=false, fifo almost full = 17
+	max30102_Bus_Write(REG_MODE_CONFIG,0x03);  	//0x02 for Red only, 0x03 for SpO2 mode 0x07 multimode LED
+	max30102_Bus_Write(REG_SPO2_CONFIG,0x27);  	// SPO2_ADC range = 4096nA, SPO2 sample rate (100 Hz), LED pulseWidth (400uS)  
+	max30102_Bus_Write(REG_LED1_PA,0x24);   	//Choose value for ~ 7mA for LED1
+	max30102_Bus_Write(REG_LED2_PA,0x24);   	// Choose value for ~ 7mA for LED2
+	max30102_Bus_Write(REG_PILOT_PA,0x7f);   	// Choose value for ~ 25mA for Pilot LED	
+
+	EXTIx_Init();	
+
+	max30102_FIFO_ReadBytes(REG_FIFO_DATA,temp);//读取传感器数据，赋值到temp中
+}
+
+void max30102_reset(void)
+{
+	max30102_Bus_Write(REG_MODE_CONFIG,0x40);
+	max30102_Bus_Write(REG_MODE_CONFIG,0x40);
+}

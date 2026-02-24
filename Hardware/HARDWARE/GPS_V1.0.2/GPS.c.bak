@@ -1,0 +1,166 @@
+#include "GPS.h"
+#include "stm32f10x_usart.h"
+
+/*
+接线说明：根线接4根
+注意事项：假如用串口1，需要删除system里面的USART.c和.h
+	
+	可以选3个串口 在 GPS_USART 1 这个 1 写几就是串口几
+	
+	PPS - 不接
+	TXD - 串口的RX
+	RXD - 串口的TX - 可以不接
+	GND - GND
+	VCC - 5V
+
+示例:
+
+#include "led.h"
+#include "delay.h"
+#include "sys.h"
+#include "GPS.h"
+#include "OLED.h"
+
+int main(void)
+{
+	delay_init();			// 延时函数初始化	  
+	LED_Init();				// 初始化与外设连接的硬件接口
+	
+	OLED_Init();			// 初始化OLED
+	OLED_Clear();			// OLED清屏
+	
+	GPS_uart_Init();		// 初始化串口读GPS
+	
+	while(1)
+	{
+		if(GPS_location)	// 判断是否成功定位
+		{					// 成功定位
+			OLED_ShowString(8,0,(uint8_t*)GPS_rxBuf_lat,16);		// 显示纬度  ddmm.mmmm,N
+			OLED_ShowString(0,2,(uint8_t*)GPS_rxBuf_lon,16);		// 显示经度 dddmm.mmmm,E
+		}
+		else
+		{					// 未成功定位
+			OLED_ShowString(0,0,(uint8_t*)"  NO   GPS       ",16);	// 显示正在搜索
+			OLED_ShowString(0,2,(uint8_t*)"  NO   GPS       ",16);	// 显示正在搜索
+		}
+	}
+}
+
+*/
+
+
+char GPS_rxBuf_lon[14] = " ";	// 经度 dddmm.mmmm,E
+char GPS_rxBuf_lat[13] = " ";	// 纬度 ddmm.mmmm,N
+char GPS_rxBuf_HH;
+char GPS_rxBuf_MM;
+char GPS_rxBuf_SS;
+
+char GPS_rxBuf_time_HH;
+char GPS_rxBuf_time_MM;
+char GPS_rxBuf_time_SS;
+
+char GPS_location			= 0;
+
+unsigned char GPS_schedule	= 0;
+unsigned char GPS_count		= 0;
+const char protocolHeader[]	= "GLL";
+
+void GPS_readData(uint8_t data)
+{
+
+	// 根据不同的GPS接收阶段进行处理
+	switch(GPS_schedule)
+	{
+		// 0代表正在接收报文头
+		case 0:
+			if(data == protocolHeader[GPS_count])
+			{
+				GPS_count++;
+				if(GPS_count == 3) GPS_schedule = 1;
+				if(GPS_count >  3) GPS_count = 0;
+			}
+			else
+			{
+				GPS_count = 0;
+			}
+			break;
+		case 1:
+			GPS_schedule = 2;
+			GPS_count = 0;
+			break;
+		case 2:
+			if(data == ',')
+			{
+				// 结束当前GPS数据包的接收
+				// 清空接收缓冲区
+				GPS_location = 0;
+				GPS_schedule = 0;
+				GPS_rxBuf_lon[0] = '\0';
+				GPS_rxBuf_lat[0] = '\0';
+				break;
+			}
+			else
+			{
+				GPS_location = 1;
+				GPS_schedule = 3;
+			}
+		case 3:
+			GPS_rxBuf_lat[GPS_count++] = data;
+			if(GPS_count == 12)
+			{
+				GPS_schedule = 4;
+			}
+			break;
+		case 4:
+			GPS_schedule = 5;
+			GPS_count = 0;
+			break;
+		case 5:
+			GPS_rxBuf_lon[GPS_count++] = data;
+			if(GPS_count == 13)
+			{
+				GPS_schedule = 6;
+			}
+			break;
+		case 6:
+			GPS_schedule = 7;
+			GPS_count = 0;
+			GPS_rxBuf_time_HH = 0;
+			break;
+		case 7:
+			GPS_rxBuf_time_HH = GPS_rxBuf_time_HH * 10 + data - '0';
+			GPS_count++;
+			if(GPS_count == 2)
+			{
+				GPS_rxBuf_time_HH = (GPS_rxBuf_time_HH + 8) % 24;
+				GPS_rxBuf_time_MM = 0;
+				GPS_count = 0;
+				GPS_schedule = 8;
+			}
+			break;
+		case 8:
+			GPS_rxBuf_time_MM = GPS_rxBuf_time_MM * 10 + data - '0';
+			GPS_count++;
+			if(GPS_count == 2)
+			{
+				GPS_rxBuf_time_SS = 0;
+				GPS_count = 0;
+				GPS_schedule = 9;
+			}
+			break;
+		case 9:
+			GPS_rxBuf_time_SS = GPS_rxBuf_time_SS * 10 + data - '0';
+			GPS_count++;
+			if(GPS_count == 2)
+			{
+				GPS_count = 0;
+				GPS_schedule = 0;
+				
+				GPS_rxBuf_HH = GPS_rxBuf_time_HH;
+				GPS_rxBuf_MM = GPS_rxBuf_time_MM;
+				GPS_rxBuf_SS = GPS_rxBuf_time_SS;
+			}
+			break;
+	}
+
+}
