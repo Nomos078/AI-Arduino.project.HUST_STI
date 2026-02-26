@@ -9,16 +9,17 @@ HUST-STI2025级寒假AI+Arduino项目_GroupD_Class3
 1. 主控单元：采用STM32微控制器，负责系统调度与模型推理计算。
 2. 传感模块：搭载高精度姿态传感器，实时捕获加速度与角速度变化。
 3. 硬件工程：完整的电路原理图与PCB布板均使用Altium Designer独立设计。
+4. 软件工程，用ESP8266模块+阿里云平台实现物联网连接。
 
 ## 3. 固件与软件架构 
 1. 开发环境：下位机控制程序完全基于Keil MDK环境进行编写与调试。
-2. 算法部署：集成TensorFlow Lite for Microcontrollers，将训练好的tflite模型转化为C语言数组，在设备端直接运行前向传播。
+2. 算法部署：集成Daobao Seed大模型，建构软件生态。
 3. 数据处理：采集到的传感器时间序列数据，经过预处理与特征提取后喂入神经网络节点。
 
 ## 4. 仓库目录说明
 1. Hardware：存放Altium Designer的完整硬件工程、原理图及BOM清单。
 2. Software：存放Keil MDK工程文件、C语言源码及底层驱动库。
-3. Algorithm：存放模型部署相关的转换脚本及原始的tflite文件。
+3. Algorithm：存放tflite文件与原始跌倒检测数据。
 4. Images：存放项目开发过程的摄影记录、实物细节图以及演示视频资料。
 
 ## 5. 快速复现指南
