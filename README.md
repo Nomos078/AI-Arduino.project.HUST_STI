@@ -29,6 +29,6 @@ HUST-STI2025级寒假AI+Arduino项目_GroupD_Class3
 4. 设备上电复位后将自动进入实时监测状态。
 
 ## 6. 文档排版与媒体嵌入示例
-1. 嵌入AD原理图截图：![系统原理图](./Media/schematic_screenshot.png)
-2. 嵌入高清实物照片：![设备实物图](./Media/device_photo.jpg)
-3. 嵌入外部演示视频：[![点击观看演示视频](视频封面图片的URL地址)](实际视频的URL地址)
+1. AD原理图截图：![系统原理图](./Media/schematic_screenshot.png)
+2. 实物照片：![设备实物图](./Media/device_photo.jpg)
+3. 演示视频：[![点击观看演示视频](视频封面图片的URL地址)](实际视频的URL地址)
